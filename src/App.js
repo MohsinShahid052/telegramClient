@@ -730,7 +730,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
-  const backendUrl = "https://e14e-138-199-53-251.ngrok-free.app "; // Updated to use unified backend port
+  const backendUrl = "https://e14e-138-199-53-251.ngrok-free.app/"; // Updated to use unified backend port
 
   const generateQRCode = async () => {
     try {
