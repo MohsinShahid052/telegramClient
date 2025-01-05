@@ -20,7 +20,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
-  const backendUrl = "http://localhost:5000"; 
+  const backendUrl = "https://telegrambackend-production.up.railway.app"; 
   
   const generateQRCode = async () => {
     setLoading(true); // Show loading state
