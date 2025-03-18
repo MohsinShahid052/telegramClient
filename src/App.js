@@ -23,7 +23,7 @@ const App = () => {
   const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
 
-  const backendUrl = "https://telegrambackend-production.up.railway.app";
+  const backendUrl = "https://telegramclientbackend.onrender.com";
 
 
   useEffect(() => {
